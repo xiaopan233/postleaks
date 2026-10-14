@@ -161,3 +161,8 @@ cython_debug/
 
 # Specific
 results_*
+
+# Go build outputs
+/go/bin/
+/go/dist/
+*.test

@@ -1,0 +1,34 @@
+- id: file-known
+  group: files
+  description: Known files with potentially sensitive information
+  message: Known file
+  severity: Low
+  key:
+    regex: ^file$
+    ignorecase: False
+  value:
+    regex: ".*(\
+      rsa|dsa|ed25519|ecdsa|pem|crt|cer|ca-bundle|p7b|p7c|p7s|ppk|jks|pkcs12|pfx|p12|\
+      id_rsa|kdbx?|(private|agile)?(-|_)?key(store|ring|chain|pair)|\
+      dockercfg|npmrc|pypirc|pip\\.conf|terraform\\.tfvars|env|cfg|conf|cnf|config|ini|s3cfg|\
+      (aws/|gem/|git-)?credentials\\.?(xml|json|ya?ml)?|\
+      proftpdpasswd|htpasswd|(\\.|-)?netrc|git(config|robrc)|\
+      (bash|zsh|dash|csh|mysql|psql|irb)(-|_)?(history|rc|profile|aliases)?|\
+      master\\.key|(login|secret)s?\\.(json|ya?ml|csv)|\
+      (password|credential|secret)(\\.[A-Za-z0-9]+)?|\
+      settings\\.py|database\\.ya?ml|idea/WebServers\\.xml|sftp(-config)?\\.json|\
+      (config(\\.inc(\\.php)?|/hub)?|LocalSettings)\\.php|\
+      (secret(-|_)token|omniauth|carrierwave|schema|knife)\\.rb|\
+      (ssh|irssi|doctl)/config(\\.yaml)?|accounts\\.xml|\
+      (accounts|dbeaver-data-sources|BapSshPublisherPlugin|filezilla|recentservers)\\.xml|\
+      pgpass|log|pcap|sql(dump)?|gnucash|dump(\\.sql)?|servlist-?\\.conf|keys\\.db|\
+      rdp|mdf|sdf|sqlite3?|bek|tpm|fve|psafe3|\
+      kwallet|tblk|pubxml(\\.user)?|\
+      (robomongo|heroku|remote-sync|deployment-config|docker/config)\\.json|\
+      otr\\.private_key|journal\\.txt|\\.(exports|functions|extra)|\
+      Favorites\\.plist|configuration\\.user\\.xpl|\
+      mongoid\\.ya?ml|salesforce\\.js|\
+      ventrilo(-|_)srv.ini|muttrc|trc|ovpn|dayone|tugboat|esmtprc|ftpconfig|\
+      backup|back|bck|~1)$"
+    ignorecase: True
+    isFile: True

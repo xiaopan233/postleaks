@@ -10,6 +10,28 @@ This script is aimed to search for these pieces of information in Postman public
 
 ## Installation
 
+A standalone Go implementation is available in [`go/`](go/README.md). It preserves the CLI options and runs without Python or Whispers.
+
+### Go 版本编译（macOS / Linux）
+
+先安装 **Go 1.22 或更新版本**，在当前仓库根目录执行：
+
+```bash
+cd go
+go version
+go mod download
+mkdir -p bin
+CGO_ENABLED=0 go build -o bin/postleaks ./cmd/postleaks
+./bin/postleaks -h
+./bin/postleaks -k example.com --output output.json
+```
+
+编译产物位于 `go/bin/postleaks`，结果文件位于 `go/output.json`。程序无需 Python、Whispers 或外部配置文件。Windows PowerShell、跨平台编译命令和常见问题见 [Go 编译文档](go/README.md#编译)。
+
+### Python installation
+
+The Python implementation can still be installed as follows.
+
 ```bash
 pip3 install postleaks
 ```

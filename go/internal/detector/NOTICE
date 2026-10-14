@@ -1,0 +1,3 @@
+Rules and detector behavior ported from Whispers 2.2.1 (https://github.com/adeptex/whispers).
+Whispers is Copyright (c) 2023, Artëm Tsvetkov, under the BSD 3-Clause license; see WHISPERS_LICENSE.
+The rule selection and two custom rules come from Postleaks postleaks/config.yml.
