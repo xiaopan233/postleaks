@@ -37,11 +37,15 @@ options:
   --include INCLUDE    URL should match this string
   --exclude EXCLUDE    URL should not match this string
   --raw                Display raw filtered results as JSON
-  --output OUTPUT      Store JSON in specific output folder (Default: results_<TIMESTAMP>)
+  --output OUTPUT      Store all results in one JSON file (Default: results_<TIMESTAMP>.json)
   --debug              Display HTTP debug info (sent/received headers, request body/params, full responses
 ```
 
-*The results are available in `results_<TIMESTAMP>` subfolder. The filename is the request identifier in Postman.com*
+*All results are written to one JSON array file. The default filename is `results_<TIMESTAMP>.json`; use `--output path/to/results.json` to choose another path.*
+
+```bash
+postleaks -k example.com --output results.json
+```
 
 ## Example
 

@@ -11,11 +11,20 @@ from datetime import datetime
 import time
 import platform
 import whispers
+from collections import Counter
 
 # Requests configuration
 POSTMAN_HOST = "https://www.postman.com"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-HEADERS = {"User-Agent" : USER_AGENT}
+HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "application/json, text/plain, */*",
+    "Referer": POSTMAN_HOST + "/",
+    "Origin": POSTMAN_HOST,
+}
+REQUEST_TIMEOUT = 30
+MAX_REQUEST_ATTEMPTS = 3
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 REQUEST_INFO_INTERESTING_DATA = ["id", "url", "method", "auth", "queryParams", "description", "name", "events", "data", "headerData"]
 DEFAULT_OUTPUT_FOLDERNAME="results_"
@@ -41,7 +50,7 @@ def main():
     parser.add_argument('--include', type=str, required=False, dest='include', help = "URL should match this string")
     parser.add_argument('--exclude', type=str, required=False, dest='exclude', help = "URL should not match this string")
     parser.add_argument('--raw', action="store_true", default=False, required=False, dest='raw', help = "Display raw filtered results as JSON")
-    parser.add_argument('--output', type=str, required=False, dest='output', help = "Store JSON in specific output folder (Default: results_<TIMESTAMP>)")
+    parser.add_argument('--output', type=str, required=False, dest='output', help = "Store all results in one JSON file (Default: results_<TIMESTAMP>.json)")
     parser.add_argument('--debug', action="store_true", default=False, required=False, dest='debug', help = "Display HTTP debug info (sent/received headers, request body/params, full responses)")
     args = parser.parse_args()
 
@@ -58,20 +67,28 @@ def main():
         with open(args.keyword_file, 'r') as f:
             keywords.extend([line.strip() for line in f.readlines()])
 
-    output_folder = ""
+    output_file = ""
     if args.output and len(args.output.strip()) >0:
-        output_folder = args.output
+        output_file = args.output
     else:
         timestamp = datetime.now().timestamp()
         timestamp_str = str(int(timestamp))
-        output_folder = DEFAULT_OUTPUT_FOLDERNAME + timestamp_str;
+        output_file = DEFAULT_OUTPUT_FOLDERNAME + timestamp_str + ".json"
 
+    all_request_infos = {}
     for keyword in keywords:
         print(BLUE+"[*] Searching for leaks related to keyword "+keyword+NOCOLOR)
-        request_infos = search(keyword, args.include, args.exclude, args.extend_workspaces, args.raw, args.strict, output_folder)
+        request_infos = search(keyword, args.include, args.exclude, args.extend_workspaces, args.raw, args.strict)
+        for request_info in request_infos:
+            all_request_infos[request_info["id"]] = request_info
         print(BLUE+"\n[*] "+str(len(request_infos))+" results found for keyword '"+keyword+"'. Happy (ethical) hacking!"+NOCOLOR)
 
-def search(keyword: str, include_match:str, exclude_match:str, extend_workspaces: bool, raw: bool, strict: bool, output: str):
+    request_infos = list(all_request_infos.values())
+    output_path = store(request_infos, output_file)
+    identify_secrets(output_path)
+    print(BLUE+"[*] Saved "+str(len(request_infos))+" unique results to "+output_path+NOCOLOR)
+
+def search(keyword: str, include_match:str, exclude_match:str, extend_workspaces: bool, raw: bool, strict: bool):
     print(BLUE+"[*] Looking for data in Postman.com")
     ids = search_requests_ids(keyword)
 
@@ -91,7 +108,7 @@ def search(keyword: str, include_match:str, exclude_match:str, extend_workspaces
         new_request_ids = search_request_ids_for_workspaces_id(workspaces_ids)
         request_ids = request_ids.union(new_request_ids)
 
-    return search_request_info_for_request_ids(request_ids, include_match, exclude_match, raw, strict, keyword, output)
+    return search_request_info_for_request_ids(request_ids, include_match, exclude_match, raw, strict, keyword)
 
 def display(request_info:any, raw:bool):
     if raw:
@@ -99,52 +116,96 @@ def display(request_info:any, raw:bool):
     else:
         print(GREEN+"[+] (ID:" + request_info["id"] + ") "+ request_info["method"] +": "+BOLD+repr(request_info["url"]) + NOCOLOR, end = '')
         print(YELLOW, end='')
-        if request_info["auth"] is not None:
-            print("\n - Authentication items: " + repr(request_info["auth"]), end='')
+        auth = request_info.get("auth")
+        if auth is not None:
+            print("\n - Authentication items: " + repr(auth), end='')
         
-        if request_info["headerData"] is not None and len(request_info["headerData"]) != 0:
+        header_data = request_info.get("headerData") or []
+        if len(header_data) != 0:
             print("\n - Headers: ", end='')
-            for d in request_info["headerData"]:
+            for d in header_data:
                 print("[" + repr(d["key"]) + "=" + repr(d["value"]) + "]", end='')
 
-        if request_info["data"] is not None and len(request_info["data"]) != 0:
+        data_items = request_info.get("data") or []
+        if len(data_items) != 0:
             print("\n - Misc. data items: ", end='')
-            for data in request_info["data"]:
+            for data in data_items:
                 if isinstance(data,dict):
                     print("[" + repr(data['key']) + "=" + repr(data['value']) + "]", end='')
-                elif data.startswith("["):
-                    tmp = json.loads(data)
+                elif isinstance(data, str) and data.startswith("["):
+                    try:
+                        tmp = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
                     for d in tmp:
                         if d['key'] is not None and len(d['key']) != 0:
                             print("[" + repr(d['key']) + "=" + repr(d['value']) + "]", end='')
         
-        if request_info["queryParams"] is not None and len(request_info["queryParams"]) != 0:
+        query_params = request_info.get("queryParams") or []
+        if len(query_params) != 0:
             print("\n - Query parameters: ", end='')
-            for d in request_info["queryParams"]:
+            for d in query_params:
                 print("[" + repr(d["key"]) + "=" + repr(d["value"]) + "]", end='')
     print(NOCOLOR)
 
-def search_request_info_for_request_ids(ids: set, include_match:str, exclude_match:str, raw: bool, strict: bool, keyword:str, output: str):
-    print(BLUE+"[*] Search for requests info in collection of requests"+NOCOLOR)
+def request_with_retries(session: requests.Session, method: str, url: str, **kwargs):
+    """Send a Postman request and retry transient failures."""
+    kwargs.setdefault("headers", HEADERS)
+    kwargs.setdefault("timeout", REQUEST_TIMEOUT)
 
-    os.makedirs(output, exist_ok=True)
+    for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
+        try:
+            response = session.request(method, url, **kwargs)
+        except requests.RequestException as exc:
+            if attempt == MAX_REQUEST_ATTEMPTS:
+                print(ORANGE + "[-] Request failed: " + str(exc) + NOCOLOR)
+                return None
+            time.sleep(attempt)
+            continue
+
+        debug_http(response)
+        if response.status_code not in RETRYABLE_STATUS_CODES or attempt == MAX_REQUEST_ATTEMPTS:
+            return response
+
+        retry_after = response.headers.get("Retry-After")
+        try:
+            delay = min(float(retry_after), 5) if retry_after else attempt
+        except (TypeError, ValueError):
+            delay = attempt
+        time.sleep(delay)
+
+    return None
+
+def search_request_info_for_request_ids(ids: set, include_match:str, exclude_match:str, raw: bool, strict: bool, keyword:str):
+    print(BLUE+"[*] Search for requests info in collection of requests"+NOCOLOR)
 
     GET_REQUEST_ENDPOINT="/_api/request/"
 
     request_infos = []
+    failed_statuses = Counter()
 
     session = requests.Session()
     for id in ids:
-        response = session.get(POSTMAN_HOST+GET_REQUEST_ENDPOINT+str(id), headers=HEADERS)
-        debug_http(response)
-        if (response.status_code != 200):
-            # Request details not found - Skip
+        response = request_with_retries(session, "GET", POSTMAN_HOST+GET_REQUEST_ENDPOINT+str(id))
+        if response is None:
+            failed_statuses["request_error"] += 1
+            continue
+        if response.status_code != 200:
+            failed_statuses[str(response.status_code)] += 1
+            print(ORANGE + "[-] Unable to fetch request " + str(id) + ": HTTP " + str(response.status_code) + NOCOLOR)
             continue
         
         request_info = {}
 
-        if "data" in response.json():
-            data = response.json()["data"]
+        try:
+            response_json = response.json()
+        except ValueError:
+            failed_statuses["invalid_json"] += 1
+            print(ORANGE + "[-] Invalid JSON returned for request " + str(id) + NOCOLOR)
+            continue
+
+        if isinstance(response_json, dict) and "data" in response_json and isinstance(response_json["data"], dict):
+            data = response_json["data"]
 
             try:
                 for key, value in data.items():
@@ -166,8 +227,14 @@ def search_request_info_for_request_ids(ids: set, include_match:str, exclude_mat
                 if "url" in request_info:
                     request_infos.append(request_info)
                     display(request_info, raw)
-                    f = store(request_info, output)
-                    identify_secrets(f)
+
+        else:
+            failed_statuses["missing_data"] += 1
+            print(ORANGE + "[-] Response for request " + str(id) + " has no data field" + NOCOLOR)
+
+    if failed_statuses:
+        summary = ", ".join(key + "=" + str(value) for key, value in sorted(failed_statuses.items()))
+        print(ORANGE + "[-] Requests skipped: " + summary + NOCOLOR)
         
     return request_infos
 
@@ -181,12 +248,13 @@ def identify_secrets(file_path: any):
         for secret in secrets:
             print(ORANGE+" > Potential secret found: " + secret + NOCOLOR)
 
-def store(request_info: any, output: str):
-    file_path = output + "/" + request_info["id"] + ".json"
-    json_string = json.dumps(request_info, indent=2)
-    with open(file_path, 'w') as file:
+def store(request_infos: list, output_file: str):
+    parent = os.path.dirname(os.path.abspath(output_file))
+    os.makedirs(parent, exist_ok=True)
+    json_string = json.dumps(request_infos, indent=2, ensure_ascii=False)
+    with open(output_file, 'w') as file:
         file.write(json_string)
-    return file_path
+    return output_file
 
 def search_request_ids_for_workspaces_id(ids: set):
     print(BLUE+"[*] Looking for requests IDs in collection of workspaces"+NOCOLOR)
@@ -197,14 +265,8 @@ def search_request_ids_for_workspaces_id(ids: set):
 
     session = requests.Session()
     for id in ids:
-        response = session.post(POSTMAN_HOST+LIST_COLLECTION_ENDPOINT+"?workspace="+str(id), headers=HEADERS)
-        debug_http(response)
-        if (response.status_code == 429):
-            fail("Rate-limiting reached. Wait for 60 seconds before continuing ...")
-            time.sleep(60)
-            response = session.post(POSTMAN_HOST+LIST_COLLECTION_ENDPOINT+"?workspace="+str(id), headers=HEADERS)
-            debug_http(response)
-        if (response.status_code != 200):
+        response = request_with_retries(session, "POST", POSTMAN_HOST+LIST_COLLECTION_ENDPOINT+"?workspace="+str(id))
+        if response is None or response.status_code != 200:
             fail("Error in [search_request_ids_for_workspaces_id] on returned results from Postman.com.")
             continue
         new_request_ids = parse_search_requests_from_workspace_response(response)
@@ -236,9 +298,8 @@ def search_requests_ids(keyword: str):
     GLOBAL_SEARCH_ENDPOINT="/_api/ws/proxy"
 
     session = requests.Session()
-    response = session.post(POSTMAN_HOST+GLOBAL_SEARCH_ENDPOINT, json=format_search_request_body(keyword, 0, MAX_SEARCH_RESULTS), headers=HEADERS)
-    debug_http(response)
-    if (response.status_code != 200):
+    response = request_with_retries(session, "POST", POSTMAN_HOST+GLOBAL_SEARCH_ENDPOINT, json=format_search_request_body(keyword, 0, MAX_SEARCH_RESULTS))
+    if response is None or response.status_code != 200:
         fail("Error in [search_requests_ids] on returned results from Postman.com.", True)
     count = response.json()["meta"]["total"]["request"]
     
@@ -251,9 +312,8 @@ def search_requests_ids(keyword: str):
             
             if offset > MAX_OFFSET:
                 break
-            r = session.post(POSTMAN_HOST+GLOBAL_SEARCH_ENDPOINT, json=format_search_request_body(keyword, offset, MAX_SEARCH_RESULTS), headers=HEADERS)
-            debug_http(r)
-            if (r.status_code != 200):
+            r = request_with_retries(session, "POST", POSTMAN_HOST+GLOBAL_SEARCH_ENDPOINT, json=format_search_request_body(keyword, offset, MAX_SEARCH_RESULTS))
+            if r is None or r.status_code != 200:
                 fail("Error in [search_requests_ids](loop) on returned results from Postman.com.")
                 continue
             parsed = parse_search_response(r)
